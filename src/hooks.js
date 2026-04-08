@@ -76,11 +76,20 @@ export function useGmail() {
       const headers = data.payload?.headers || [];
       const getH = (n) => headers.find(h => h.name === n)?.value || '';
 
-      /* Extract body text */
+      /* Extract body text — properly decode base64url → UTF-8 */
+      const decodeBase64Utf8 = (b64) => {
+        try {
+          const raw = atob(b64.replace(/-/g, '+').replace(/_/g, '/'));
+          const bytes = new Uint8Array(raw.length);
+          for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+          return new TextDecoder('utf-8').decode(bytes);
+        } catch { return atob(b64.replace(/-/g, '+').replace(/_/g, '/')); }
+      };
+
       let body = '';
       const extractText = (part) => {
         if (part.mimeType === 'text/plain' && part.body?.data) {
-          body += atob(part.body.data.replace(/-/g, '+').replace(/_/g, '/'));
+          body += decodeBase64Utf8(part.body.data);
         }
         if (part.parts) part.parts.forEach(extractText);
       };
