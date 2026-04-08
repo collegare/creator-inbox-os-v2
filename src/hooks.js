@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react';
 import { useAuth } from './contexts';
 
 /* ============================================================
-   useGmail — Fetch messages from Gmail API
+   useGmail â Fetch messages from Gmail API
    ============================================================ */
 export function useGmail() {
   const { accessToken, signOut } = useAuth();
@@ -25,7 +25,7 @@ export function useGmail() {
 
       /* Handle expired / invalid token */
       if (listRes.status === 401) {
-        setError('Session expired — please disconnect and sign in again.');
+        setError('Session expired â please disconnect and sign in again.');
         signOut();
         return [];
       }
@@ -64,6 +64,57 @@ export function useGmail() {
     }
   }, [accessToken, signOut]);
 
+  /* Shared base64url â UTF-8 decoder */
+  const decodeBase64Utf8 = (b64) => {
+    try {
+      const raw = atob(b64.replace(/-/g, '+').replace(/_/g, '/'));
+      const bytes = new Uint8Array(raw.length);
+      for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+      return new TextDecoder('utf-8').decode(bytes);
+    } catch { return atob(b64.replace(/-/g, '+').replace(/_/g, '/')); }
+  };
+
+  /* Strip HTML tags to produce readable plain text */
+  const stripHtml = (html) => {
+    if (!html) return '';
+    return html
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/p>/gi, '\n\n')
+      .replace(/<\/div>/gi, '\n')
+      .replace(/<\/li>/gi, '\n')
+      .replace(/<\/tr>/gi, '\n')
+      .replace(/<\/h[1-6]>/gi, '\n\n')
+      .replace(/<[^>]+>/g, '')
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&amp;/gi, '&')
+      .replace(/&lt;/gi, '<')
+      .replace(/&gt;/gi, '>')
+      .replace(/&quot;/gi, '"')
+      .replace(/&#39;/gi, "'")
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  };
+
+  /* Extract body from a Gmail message payload â try plain text first, fall back to HTML */
+  const extractBody = (payload) => {
+    let plainText = '';
+    let htmlText = '';
+
+    const walk = (part) => {
+      if (part.mimeType === 'text/plain' && part.body?.data) {
+        plainText += decodeBase64Utf8(part.body.data);
+      }
+      if (part.mimeType === 'text/html' && part.body?.data) {
+        htmlText += decodeBase64Utf8(part.body.data);
+      }
+      if (part.parts) part.parts.forEach(walk);
+    };
+    if (payload) walk(payload);
+
+    // Prefer plain text; fall back to stripped HTML
+    return plainText || stripHtml(htmlText);
+  };
+
   const fetchFullMessage = useCallback(async (messageId) => {
     if (!accessToken) return null;
     try {
@@ -76,25 +127,6 @@ export function useGmail() {
       const headers = data.payload?.headers || [];
       const getH = (n) => headers.find(h => h.name === n)?.value || '';
 
-      /* Extract body text — properly decode base64url → UTF-8 */
-      const decodeBase64Utf8 = (b64) => {
-        try {
-          const raw = atob(b64.replace(/-/g, '+').replace(/_/g, '/'));
-          const bytes = new Uint8Array(raw.length);
-          for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
-          return new TextDecoder('utf-8').decode(bytes);
-        } catch { return atob(b64.replace(/-/g, '+').replace(/_/g, '/')); }
-      };
-
-      let body = '';
-      const extractText = (part) => {
-        if (part.mimeType === 'text/plain' && part.body?.data) {
-          body += decodeBase64Utf8(part.body.data);
-        }
-        if (part.parts) part.parts.forEach(extractText);
-      };
-      if (data.payload) extractText(data.payload);
-
       return {
         id: data.id,
         threadId: data.threadId,
@@ -102,17 +134,46 @@ export function useGmail() {
         from: getH('From'),
         to: getH('To'),
         date: getH('Date'),
-        body,
+        body: extractBody(data.payload),
         snippet: data.snippet,
       };
     } catch { return null; }
   }, [accessToken]);
 
-  return { fetchMessages, fetchFullMessage, loading, error };
+  /* Fetch an entire Gmail thread â returns array of parsed messages */
+  const fetchThread = useCallback(async (threadId) => {
+    if (!accessToken || !threadId) return [];
+    try {
+      const res = await fetch(
+        `https://gmail.googleapis.com/gmail/v1/users/me/threads/${threadId}?format=full`,
+        { headers: { Authorization: `Bearer ${accessToken}` } }
+      );
+      if (!res.ok) return [];
+      const data = await res.json();
+      const messages = data.messages || [];
+
+      return messages.map((msg) => {
+        const headers = msg.payload?.headers || [];
+        const getH = (n) => headers.find(h => h.name === n)?.value || '';
+        return {
+          id: msg.id,
+          threadId: msg.threadId,
+          subject: getH('Subject'),
+          from: getH('From'),
+          to: getH('To'),
+          date: getH('Date'),
+          body: extractBody(msg.payload),
+          snippet: msg.snippet,
+        };
+      });
+    } catch { return []; }
+  }, [accessToken]);
+
+  return { fetchMessages, fetchFullMessage, fetchThread, loading, error };
 }
 
 /* ============================================================
-   useCalendar — Fetch events from Google Calendar API
+   useCalendar â Fetch events from Google Calendar API
    ============================================================ */
 export function useCalendar() {
   const { accessToken } = useAuth();
@@ -182,7 +243,7 @@ export function useCalendar() {
 }
 
 /* ============================================================
-   useExport — CSV and PDF export
+   useExport â CSV and PDF export
    ============================================================ */
 export function useExport() {
   const exportCSV = useCallback((data, filename = 'export.csv') => {
