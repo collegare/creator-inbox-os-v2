@@ -2,7 +2,7 @@ import { useState, useCallback, useMemo } from 'react';
 import { useAuth, useData } from '../contexts';
 import { useGmail } from '../hooks';
 import { PageHeader, EmptyState, Modal, useToast } from './Common';
-import { Mail, RefreshCw, Plus, Inbox as InboxIcon, LogIn, ChevronRight, Search, X, Tag } from 'lucide-react';
+import { Mail, RefreshCw, Plus, Inbox as InboxIcon, LogIn, ChevronRight, Search, X, Tag, ChevronDown, ChevronUp, User, Reply } from 'lucide-react';
 import { useGoogleLogin } from '@react-oauth/google';
 import { OPP_TYPES, PIPELINE_STAGES } from '../utils';
 
@@ -13,6 +13,163 @@ function extractEmail(fromStr) {
   if (!fromStr) return '';
   const match = fromStr.match(/<(.+?)>/);
   return match ? match[1].toLowerCase().trim() : fromStr.toLowerCase().trim();
+}
+
+/* ============================================================
+   Helper: parse an email body into thread segments
+   Detects "On <date> <person> wrote:" patterns and "> " quote markers
+   ============================================================ */
+function parseThread(body) {
+  if (!body) return [];
+
+  // Split on "On ... wrote:" header lines
+  const headerRe = /^(On\s.+?wrote:\s*)$/m;
+  const parts = body.split(headerRe);
+
+  const segments = [];
+  let i = 0;
+
+  while (i < parts.length) {
+    const chunk = parts[i];
+
+    // Check if this chunk is a "On ... wrote:" header
+    if (headerRe.test(chunk.trim())) {
+      // The next chunk is the quoted content
+      const quotedBody = i + 1 < parts.length ? parts[i + 1] : '';
+      // Extract sender from header
+      const senderMatch = chunk.match(/On\s.+?\s(.+?)\s*wrote:/);
+      const dateMatch = chunk.match(/On\s(.+?)\s(?:at\s.+?\s)?[\w.]+@/i) || chunk.match(/On\s(.+?),?\s/);
+      segments.push({
+        type: 'quoted',
+        sender: senderMatch ? senderMatch[1].replace(/<.*?>/, '').trim() : 'Previous sender',
+        date: dateMatch ? dateMatch[1].trim() : '',
+        header: chunk.trim(),
+        body: cleanQuotedText(quotedBody),
+      });
+      i += 2;
+    } else {
+      // This is the main (most recent) message or a standalone block
+      const cleaned = chunk.trim();
+      if (cleaned) {
+        segments.push({
+          type: segments.length === 0 ? 'main' : 'quoted',
+          sender: '',
+          date: '',
+          header: '',
+          body: cleaned,
+        });
+      }
+      i += 1;
+    }
+  }
+
+  // If parsing produced nothing useful, return the whole body as one segment
+  if (segments.length === 0) {
+    return [{ type: 'main', sender: '', date: '', header: '', body: body.trim() }];
+  }
+
+  return segments;
+}
+
+/** Remove leading "> " markers from quoted text lines */
+function cleanQuotedText(text) {
+  if (!text) return '';
+  return text
+    .split('\n')
+    .map(line => line.replace(/^>\s?/gm, ''))
+    .join('\n')
+    .trim();
+}
+
+/* ============================================================
+   ThreadView — renders parsed email thread as styled blocks
+   ============================================================ */
+function ThreadView({ body, senderName, senderDate }) {
+  const segments = useMemo(() => parseThread(body), [body]);
+  const [expandedQuotes, setExpandedQuotes] = useState({});
+
+  const toggleQuote = (idx) => {
+    setExpandedQuotes(prev => ({ ...prev, [idx]: !prev[idx] }));
+  };
+
+  if (segments.length <= 1 && segments[0]?.type === 'main') {
+    // Simple email with no thread — render cleanly
+    return (
+      <div className="text-sm text-brand-text-sec leading-relaxed whitespace-pre-wrap font-sans">
+        {segments[0]?.body || body}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {segments.map((seg, idx) => {
+        if (seg.type === 'main') {
+          return (
+            <div key={idx} className="pb-3">
+              {/* Main message header */}
+              {senderName && (
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-semibold"
+                    style={{ backgroundColor: '#6b1309' }}>
+                    {(senderName || '?')[0]?.toUpperCase()}
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-brand-text">{senderName}</p>
+                    {senderDate && <p className="text-[11px] text-brand-text-muted">{senderDate}</p>}
+                  </div>
+                </div>
+              )}
+              <div className="text-sm text-brand-text-sec leading-relaxed whitespace-pre-wrap font-sans">
+                {seg.body}
+              </div>
+            </div>
+          );
+        }
+
+        // Quoted reply segment
+        const isExpanded = expandedQuotes[idx];
+        const previewLines = seg.body.split('\n').slice(0, 2).join(' ').slice(0, 100);
+
+        return (
+          <div key={idx} className="border-l-2 rounded-sm overflow-hidden"
+            style={{ borderColor: '#d1d5db' }}>
+            {/* Quoted header — clickable to expand/collapse */}
+            <button
+              onClick={() => toggleQuote(idx)}
+              className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-brand-surface-alt transition-colors"
+              style={{ backgroundColor: 'rgba(0,0,0,0.02)' }}
+            >
+              <Reply size={12} className="text-brand-text-muted shrink-0 rotate-180" />
+              <div className="flex-1 min-w-0">
+                <span className="text-xs font-medium text-brand-text-sec">
+                  {seg.sender || 'Previous message'}
+                </span>
+                {seg.date && (
+                  <span className="text-[10px] text-brand-text-muted ml-2">{seg.date}</span>
+                )}
+                {!isExpanded && (
+                  <p className="text-[11px] text-brand-text-muted truncate mt-0.5">{previewLines}...</p>
+                )}
+              </div>
+              {isExpanded
+                ? <ChevronUp size={14} className="text-brand-text-muted shrink-0" />
+                : <ChevronDown size={14} className="text-brand-text-muted shrink-0" />
+              }
+            </button>
+
+            {/* Quoted body — collapsible */}
+            {isExpanded && (
+              <div className="px-4 py-3 text-sm text-brand-text-muted leading-relaxed whitespace-pre-wrap font-sans"
+                style={{ backgroundColor: 'rgba(0,0,0,0.015)' }}>
+                {seg.body}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 /* ============================================================
@@ -49,6 +206,7 @@ export default function Inbox() {
     opportunities.forEach(opp => {
       if (opp.email) {
         const key = opp.email.toLowerCase().trim();
+        // If multiple opps share the same email, use the most recently updated one
         if (!map[key] || new Date(opp.updatedAt) > new Date(map[key].updatedAt)) {
           map[key] = opp;
         }
@@ -114,10 +272,13 @@ export default function Inbox() {
 
   /* ---------- Force refresh: clear stored emails and re-sync ---------- */
   const handleForceRefresh = useCallback(async () => {
+    // Clear stored emails first
     try { localStorage.removeItem('cio_imported_emails'); } catch {}
-    addEmails([]);
+    addEmails([]); // reset state (will be overwritten)
+    // Now fetch fresh
     const msgs = await fetchMessages('in:inbox', 50);
     if (msgs.length) {
+      // Replace all emails with fresh data
       try { localStorage.setItem('cio_imported_emails', JSON.stringify(msgs)); } catch {}
       addEmails(msgs);
       toast?.(`Refreshed — ${msgs.length} emails loaded`);
@@ -322,7 +483,11 @@ export default function Inbox() {
               </div>
               <div className="flex-1 overflow-y-auto px-6 py-5">
                 {fullBody ? (
-                  <pre className="text-sm text-brand-text-sec whitespace-pre-wrap font-sans leading-relaxed">{fullBody}</pre>
+                  <ThreadView
+                    body={fullBody}
+                    senderName={selectedEmail.from?.replace(/<.+>/, '').trim()}
+                    senderDate={selectedEmail.date}
+                  />
                 ) : (
                   <p className="text-sm text-brand-text-sec leading-relaxed">{selectedEmail.snippet}</p>
                 )}
