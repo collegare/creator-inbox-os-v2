@@ -1,14 +1,37 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { useAuth, useData } from '../contexts';
 import { useGmail } from '../hooks';
 import { PageHeader, EmptyState, Modal, useToast } from './Common';
-import { Mail, RefreshCw, Plus, ExternalLink, Inbox as InboxIcon, LogIn, ChevronRight } from 'lucide-react';
+import { Mail, RefreshCw, Plus, Inbox as InboxIcon, LogIn, ChevronRight, Search, X, Tag } from 'lucide-react';
 import { useGoogleLogin } from '@react-oauth/google';
-import { OPP_TYPES } from '../utils';
+import { OPP_TYPES, PIPELINE_STAGES } from '../utils';
+
+/* ============================================================
+   Helper: extract raw email address from a "Name <email>" string
+   ============================================================ */
+function extractEmail(fromStr) {
+  if (!fromStr) return '';
+  const match = fromStr.match(/<(.+?)>/);
+  return match ? match[1].toLowerCase().trim() : fromStr.toLowerCase().trim();
+}
+
+/* ============================================================
+   Stage badge colors — reused for labels
+   ============================================================ */
+const STAGE_COLORS = {
+  'new':          { bg: '#fff4e5', text: '#b35c00', border: '#ffd699' },
+  'review':       { bg: '#e8f4fd', text: '#0b6fcc', border: '#b3d9f7' },
+  'replied':      { bg: '#e6f7ee', text: '#0a7c42', border: '#a3e4c1' },
+  'negotiating':  { bg: '#f3e8ff', text: '#6b21a8', border: '#d4b5f5' },
+  'follow-up':    { bg: '#fff1f0', text: '#b91c1c', border: '#fca5a5' },
+  'closed-won':   { bg: '#dcfce7', text: '#15803d', border: '#86efac' },
+  'closed-lost':  { bg: '#f1f1f1', text: '#6b7280', border: '#d1d5db' },
+  'archived':     { bg: '#f5f5f4', text: '#78716c', border: '#d6d3d1' },
+};
 
 export default function Inbox() {
   const { user, accessToken, signIn, signOut } = useAuth();
-  const { addEmails, emails, addOpp } = useData();
+  const { addEmails, emails, addOpp, opportunities } = useData();
   const { fetchMessages, fetchFullMessage, loading, error } = useGmail();
   const toast = useToast();
 
@@ -16,8 +39,49 @@ export default function Inbox() {
   const [fullBody, setFullBody] = useState('');
   const [importOpen, setImportOpen] = useState(false);
   const [importForm, setImportForm] = useState({ brand: '', type: 'unclear' });
+  const [searchQuery, setSearchQuery] = useState('');
 
   const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+
+  /* ---------- Build email-to-opportunity lookup ---------- */
+  const emailOppMap = useMemo(() => {
+    const map = {};
+    opportunities.forEach(opp => {
+      if (opp.email) {
+        const key = opp.email.toLowerCase().trim();
+        if (!map[key] || new Date(opp.updatedAt) > new Date(map[key].updatedAt)) {
+          map[key] = opp;
+        }
+      }
+    });
+    return map;
+  }, [opportunities]);
+
+  /* ---------- Get label for an email ---------- */
+  const getEmailLabel = useCallback((emailItem) => {
+    const senderEmail = extractEmail(emailItem.from);
+    const opp = emailOppMap[senderEmail];
+    if (!opp) return null;
+    const stage = PIPELINE_STAGES.find(s => s.id === opp.status);
+    if (!stage) return null;
+    return {
+      stageId: stage.id,
+      stageLabel: stage.label,
+      brandName: opp.brand,
+      colors: STAGE_COLORS[stage.id] || STAGE_COLORS['new'],
+    };
+  }, [emailOppMap]);
+
+  /* ---------- Filter emails by search query ---------- */
+  const filteredEmails = useMemo(() => {
+    if (!searchQuery.trim()) return emails;
+    const q = searchQuery.toLowerCase();
+    return emails.filter(em =>
+      (em.from || '').toLowerCase().includes(q) ||
+      (em.subject || '').toLowerCase().includes(q) ||
+      (em.snippet || '').toLowerCase().includes(q)
+    );
+  }, [emails, searchQuery]);
 
   /* ---------- Google Login ---------- */
   const login = useGoogleLogin({
@@ -37,16 +101,30 @@ export default function Inbox() {
     scope: 'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/calendar',
   });
 
-  /* ---------- Fetch Emails ---------- */
+  /* ---------- Fetch Emails (50, no category filter) ---------- */
   const handleFetch = useCallback(async () => {
-    const msgs = await fetchMessages('category:primary', 30);
+    const msgs = await fetchMessages('in:inbox', 50);
     if (msgs.length) {
       addEmails(msgs);
-      toast?.(`Imported ${msgs.length} emails`);
-    } else {
+      toast?.(`Synced ${msgs.length} emails`);
+    } else if (!error) {
       toast?.('No new emails found');
     }
-  }, [fetchMessages, addEmails, toast]);
+  }, [fetchMessages, addEmails, toast, error]);
+
+  /* ---------- Force refresh: clear stored emails and re-sync ---------- */
+  const handleForceRefresh = useCallback(async () => {
+    try { localStorage.removeItem('cio_imported_emails'); } catch {}
+    addEmails([]);
+    const msgs = await fetchMessages('in:inbox', 50);
+    if (msgs.length) {
+      try { localStorage.setItem('cio_imported_emails', JSON.stringify(msgs)); } catch {}
+      addEmails(msgs);
+      toast?.(`Refreshed — ${msgs.length} emails loaded`);
+    } else if (!error) {
+      toast?.('No emails found in inbox');
+    }
+  }, [fetchMessages, addEmails, toast, error]);
 
   /* ---------- View Full Email ---------- */
   const handleSelectEmail = useCallback(async (email) => {
@@ -123,6 +201,9 @@ export default function Inbox() {
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
             {loading ? 'Syncing...' : 'Sync Emails'}
           </button>
+          <button onClick={handleForceRefresh} disabled={loading} className="btn btn-ghost btn-sm" title="Clear cached emails and re-sync from Gmail">
+            Refresh All
+          </button>
           <button onClick={signOut} className="btn btn-ghost btn-sm">Disconnect</button>
         </div>
       </PageHeader>
@@ -132,28 +213,73 @@ export default function Inbox() {
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-4" style={{ minHeight: '60vh' }}>
         {/* Email list */}
         <div className="lg:col-span-2 card flex flex-col overflow-hidden">
-          <div className="px-5 py-4 border-b border-brand-border-l text-sm font-semibold text-brand-text">
-            {emails.length} Emails
+          {/* Header + Search */}
+          <div className="px-5 py-4 border-b border-brand-border-l">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-sm font-semibold text-brand-text">
+                {filteredEmails.length}{searchQuery ? ` of ${emails.length}` : ''} Emails
+              </span>
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery('')}
+                  className="text-xs text-brand-text-muted hover:text-brand-text flex items-center gap-1"
+                >
+                  <X size={12} /> Clear
+                </button>
+              )}
+            </div>
+            <div className="relative">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-brand-text-muted" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                placeholder="Search by sender, subject..."
+                className="input pl-9 py-2 text-sm"
+              />
+            </div>
           </div>
+
+          {/* Email list items */}
           <div className="flex-1 overflow-y-auto">
-            {emails.length > 0 ? emails.map(em => (
-              <button
-                key={em.id}
-                onClick={() => handleSelectEmail(em)}
-                className={`w-full text-left px-5 py-3.5 border-b border-brand-border-l hover:bg-brand-surface-alt transition-colors flex items-start gap-3 ${selectedEmail?.id === em.id ? 'bg-brand-primary-l' : ''}`}
-              >
-                <Mail size={16} className="text-brand-text-muted mt-0.5 shrink-0" />
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium truncate">{em.from?.replace(/<.+>/, '').trim() || 'Unknown'}</p>
-                  <p className="text-xs text-brand-text-sec truncate mt-0.5">{em.subject}</p>
-                  <p className="text-[11px] text-brand-text-muted mt-1 line-clamp-1">{em.snippet}</p>
-                </div>
-                <ChevronRight size={14} className="text-brand-text-muted mt-1 shrink-0" />
-              </button>
-            )) : (
+            {filteredEmails.length > 0 ? filteredEmails.map(em => {
+              const label = getEmailLabel(em);
+              return (
+                <button
+                  key={em.id}
+                  onClick={() => handleSelectEmail(em)}
+                  className={`w-full text-left px-5 py-3.5 border-b border-brand-border-l hover:bg-brand-surface-alt transition-colors flex items-start gap-3 ${selectedEmail?.id === em.id ? 'bg-brand-primary-l' : ''}`}
+                >
+                  <Mail size={16} className="text-brand-text-muted mt-0.5 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-medium truncate flex-1">{em.from?.replace(/<.+>/, '').trim() || 'Unknown'}</p>
+                      {label && (
+                        <span
+                          className="shrink-0 inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full"
+                          style={{
+                            backgroundColor: label.colors.bg,
+                            color: label.colors.text,
+                            border: `1px solid ${label.colors.border}`,
+                          }}
+                        >
+                          <Tag size={9} />
+                          {label.stageLabel}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-brand-text-sec truncate mt-0.5">{em.subject}</p>
+                    <p className="text-[11px] text-brand-text-muted mt-1 line-clamp-1">{em.snippet}</p>
+                  </div>
+                  <ChevronRight size={14} className="text-brand-text-muted mt-1 shrink-0" />
+                </button>
+              );
+            }) : (
               <div className="flex flex-col items-center justify-center py-16 text-brand-text-muted">
                 <InboxIcon size={36} className="opacity-40 mb-3" />
-                <p className="text-sm">Click "Sync Emails" to import</p>
+                <p className="text-sm">
+                  {searchQuery ? 'No emails match your search' : 'Click "Sync Emails" to import'}
+                </p>
               </div>
             )}
           </div>
@@ -168,7 +294,26 @@ export default function Inbox() {
                   <div className="min-w-0">
                     <h3 className="text-base font-semibold truncate">{selectedEmail.subject || '(No subject)'}</h3>
                     <p className="text-sm text-brand-text-sec mt-1">{selectedEmail.from}</p>
-                    <p className="text-xs text-brand-text-muted mt-0.5">{selectedEmail.date}</p>
+                    <div className="flex items-center gap-2 mt-1">
+                      <p className="text-xs text-brand-text-muted">{selectedEmail.date}</p>
+                      {(() => {
+                        const label = getEmailLabel(selectedEmail);
+                        if (!label) return null;
+                        return (
+                          <span
+                            className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full"
+                            style={{
+                              backgroundColor: label.colors.bg,
+                              color: label.colors.text,
+                              border: `1px solid ${label.colors.border}`,
+                            }}
+                          >
+                            <Tag size={9} />
+                            {label.brandName} — {label.stageLabel}
+                          </span>
+                        );
+                      })()}
+                    </div>
                   </div>
                   <button onClick={() => { setImportForm({ brand: selectedEmail.from?.replace(/<.+>/, '').trim().split(' ')[0] || '', type: 'unclear' }); setImportOpen(true); }} className="btn btn-primary btn-sm shrink-0">
                     <Plus size={14} /> Import as Opp
