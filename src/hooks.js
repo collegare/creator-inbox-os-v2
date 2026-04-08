@@ -5,25 +5,35 @@ import { useAuth } from './contexts';
    useGmail — Fetch messages from Gmail API
    ============================================================ */
 export function useGmail() {
-  const { accessToken } = useAuth();
+  const { accessToken, signOut } = useAuth();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  const fetchMessages = useCallback(async (query = 'category:primary', maxResults = 20) => {
+  const fetchMessages = useCallback(async (query = '', maxResults = 50) => {
     if (!accessToken) { setError('Not authenticated'); return []; }
     setLoading(true);
     setError(null);
     try {
       /* Step 1: list message IDs */
+      const params = new URLSearchParams({ maxResults: String(maxResults) });
+      if (query) params.set('q', query);
+
       const listRes = await fetch(
-        `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=${maxResults}`,
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages?${params}`,
         { headers: { Authorization: `Bearer ${accessToken}` } }
       );
+
+      /* Handle expired / invalid token */
+      if (listRes.status === 401) {
+        setError('Session expired — please disconnect and sign in again.');
+        signOut();
+        return [];
+      }
       if (!listRes.ok) throw new Error(`Gmail list failed: ${listRes.status}`);
       const listData = await listRes.json();
-      if (!listData.messages) return [];
+      if (!listData.messages) { return []; }
 
-      /* Step 2: fetch each message */
+      /* Step 2: fetch each message metadata */
       const msgs = await Promise.all(
         listData.messages.map(async (m) => {
           const res = await fetch(
@@ -52,7 +62,7 @@ export function useGmail() {
     } finally {
       setLoading(false);
     }
-  }, [accessToken]);
+  }, [accessToken, signOut]);
 
   const fetchFullMessage = useCallback(async (messageId) => {
     if (!accessToken) return null;
