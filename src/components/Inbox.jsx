@@ -2,9 +2,48 @@ import { useState, useCallback, useMemo } from 'react';
 import { useAuth, useData } from '../contexts';
 import { useGmail } from '../hooks';
 import { PageHeader, EmptyState, Modal, useToast } from './Common';
-import { Mail, RefreshCw, Plus, Inbox as InboxIcon, LogIn, ChevronRight, Search, X, Tag, ChevronDown, ChevronUp, User, Reply } from 'lucide-react';
+import { Mail, RefreshCw, Plus, Inbox as InboxIcon, LogIn, ChevronRight, Search, X, Tag, ChevronDown, ChevronUp, User, Reply, Clock, AtSign } from 'lucide-react';
 import { useGoogleLogin } from '@react-oauth/google';
-import { OPP_TYPES, PIPELINE_STAGES } from '../utils';
+import { OPP_TYPES, PIPELINE_STAGES, fmtDate } from '../utils';
+
+/** Decode HTML entities in Gmail snippets */
+function decodeHtmlEntities(str) {
+  if (!str) return '';
+  const ta = document.createElement('textarea');
+  ta.innerHTML = str;
+  return ta.value;
+}
+
+/** Format a raw email date string into a friendly readable format */
+function formatEmailDate(dateStr) {
+  if (!dateStr) return '';
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d)) return dateStr;
+    const now = new Date();
+    const isToday = d.toDateString() === now.toDateString();
+    const yesterday = new Date(now); yesterday.setDate(now.getDate() - 1);
+    const isYesterday = d.toDateString() === yesterday.toDateString();
+    const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+    if (isToday) return `Today at ${time}`;
+    if (isYesterday) return `Yesterday at ${time}`;
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) + ` at ${time}`;
+  } catch { return dateStr; }
+}
+
+/** Extract display name from "Name <email>" format */
+function extractDisplayName(fromStr) {
+  if (!fromStr) return 'Unknown';
+  return fromStr.replace(/<.+>/, '').replace(/"/g, '').trim() || 'Unknown';
+}
+
+/** Get initials from a name (up to 2 characters) */
+function getInitials(name) {
+  if (!name) return '?';
+  const parts = name.replace(/"/g, '').trim().split(/\s+/);
+  if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  return (parts[0]?.[0] || '?').toUpperCase();
+}
 
 /* ============================================================
    Helper: extract raw email address from a "Name <email>" string
@@ -82,7 +121,7 @@ function cleanQuotedText(text) {
 }
 
 /* ============================================================
-   ThreadView — renders parsed email thread as styled blocks
+   ThreadView â renders parsed email thread as styled blocks
    ============================================================ */
 function ThreadView({ body, senderName, senderDate }) {
   const segments = useMemo(() => parseThread(body), [body]);
@@ -93,9 +132,9 @@ function ThreadView({ body, senderName, senderDate }) {
   };
 
   if (segments.length <= 1 && segments[0]?.type === 'main') {
-    // Simple email with no thread — render cleanly
+    // Simple email with no thread â render cleanly
     return (
-      <div className="text-sm text-brand-text-sec leading-relaxed whitespace-pre-wrap font-sans">
+      <div className="text-sm whitespace-pre-wrap font-sans" style={{ color: 'var(--c-text-sec)', lineHeight: '1.8', letterSpacing: '0.01em' }}>
         {segments[0]?.body || body}
       </div>
     );
@@ -120,7 +159,7 @@ function ThreadView({ body, senderName, senderDate }) {
                   </div>
                 </div>
               )}
-              <div className="text-sm text-brand-text-sec leading-relaxed whitespace-pre-wrap font-sans">
+              <div className="text-sm whitespace-pre-wrap font-sans" style={{ color: 'var(--c-text-sec)', lineHeight: '1.8', letterSpacing: '0.01em' }}>
                 {seg.body}
               </div>
             </div>
@@ -129,39 +168,39 @@ function ThreadView({ body, senderName, senderDate }) {
 
         // Quoted reply segment
         const isExpanded = expandedQuotes[idx];
-        const previewLines = seg.body.split('\n').slice(0, 2).join(' ').slice(0, 100);
+        const previewLines = seg.body.split('\n').slice(0, 2).join(' ').slice(0, 120);
 
         return (
-          <div key={idx} className="border-l-2 rounded-sm overflow-hidden"
-            style={{ borderColor: '#d1d5db' }}>
-            {/* Quoted header — clickable to expand/collapse */}
+          <div key={idx} className="rounded-lg overflow-hidden" style={{ border: '1px solid var(--c-border-light)' }}>
+            {/* Quoted header â clickable to expand/collapse */}
             <button
               onClick={() => toggleQuote(idx)}
-              className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-brand-surface-alt transition-colors"
-              style={{ backgroundColor: 'rgba(0,0,0,0.02)' }}
+              className="w-full flex items-center gap-2.5 px-4 py-2.5 text-left hover:bg-brand-surface-alt transition-colors"
+              style={{ backgroundColor: 'var(--c-surface-alt)' }}
             >
-              <Reply size={12} className="text-brand-text-muted shrink-0 rotate-180" />
+              <Reply size={13} style={{ color: 'var(--c-text-muted)' }} className="shrink-0 rotate-180" />
               <div className="flex-1 min-w-0">
-                <span className="text-xs font-medium text-brand-text-sec">
-                  {seg.sender || 'Previous message'}
-                </span>
-                {seg.date && (
-                  <span className="text-[10px] text-brand-text-muted ml-2">{seg.date}</span>
-                )}
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold" style={{ color: 'var(--c-text-sec)' }}>
+                    {seg.sender || 'Previous message'}
+                  </span>
+                  {seg.date && (
+                    <span className="text-[10px]" style={{ color: 'var(--c-text-muted)' }}>{seg.date}</span>
+                  )}
+                </div>
                 {!isExpanded && (
-                  <p className="text-[11px] text-brand-text-muted truncate mt-0.5">{previewLines}...</p>
+                  <p className="text-[11px] truncate mt-0.5" style={{ color: 'var(--c-text-muted)' }}>{previewLines}...</p>
                 )}
               </div>
               {isExpanded
-                ? <ChevronUp size={14} className="text-brand-text-muted shrink-0" />
-                : <ChevronDown size={14} className="text-brand-text-muted shrink-0" />
+                ? <ChevronUp size={14} style={{ color: 'var(--c-text-muted)' }} className="shrink-0" />
+                : <ChevronDown size={14} style={{ color: 'var(--c-text-muted)' }} className="shrink-0" />
               }
             </button>
 
-            {/* Quoted body — collapsible */}
+            {/* Quoted body â collapsible */}
             {isExpanded && (
-              <div className="px-4 py-3 text-sm text-brand-text-muted leading-relaxed whitespace-pre-wrap font-sans"
-                style={{ backgroundColor: 'rgba(0,0,0,0.015)' }}>
+              <div className="px-5 py-4 text-sm whitespace-pre-wrap font-sans" style={{ color: 'var(--c-text-muted)', lineHeight: '1.75', borderTop: '1px solid var(--c-border-light)' }}>
                 {seg.body}
               </div>
             )}
@@ -173,7 +212,7 @@ function ThreadView({ body, senderName, senderDate }) {
 }
 
 /* ============================================================
-   Stage badge colors — reused for labels
+   Stage badge colors â reused for labels
    ============================================================ */
 const STAGE_COLORS = {
   'new':          { bg: '#fff4e5', text: '#b35c00', border: '#ffd699' },
@@ -288,7 +327,7 @@ export default function Inbox() {
       // Replace all emails with fresh data
       try { localStorage.setItem('cio_imported_emails', JSON.stringify(msgs)); } catch {}
       addEmails(msgs);
-      toast?.(`Refreshed — ${msgs.length} emails loaded`);
+      toast?.(`Refreshed â ${msgs.length} emails loaded`);
     } else if (!error) {
       toast?.('No emails found in inbox');
     }
@@ -418,10 +457,13 @@ export default function Inbox() {
                   onClick={() => handleSelectEmail(em)}
                   className={`w-full text-left px-5 py-3.5 border-b border-brand-border-l hover:bg-brand-surface-alt transition-colors flex items-start gap-3 ${selectedEmail?.id === em.id ? 'bg-brand-primary-l' : ''}`}
                 >
-                  <Mail size={16} className="text-brand-text-muted mt-0.5 shrink-0" />
+                  <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-[10px] font-semibold shrink-0 mt-0.5"
+                    style={{ backgroundColor: '#6b1309' }}>
+                    {getInitials(extractDisplayName(em.from))}
+                  </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <p className="text-sm font-medium truncate flex-1">{em.from?.replace(/<.+>/, '').trim() || 'Unknown'}</p>
+                      <p className="text-sm font-medium truncate flex-1">{extractDisplayName(em.from)}</p>
                       {label && (
                         <span
                           className="shrink-0 inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full"
@@ -437,7 +479,7 @@ export default function Inbox() {
                       )}
                     </div>
                     <p className="text-xs text-brand-text-sec truncate mt-0.5">{em.subject}</p>
-                    <p className="text-[11px] text-brand-text-muted mt-1 line-clamp-1">{em.snippet}</p>
+                    <p className="text-[11px] text-brand-text-muted mt-1 line-clamp-1">{decodeHtmlEntities(em.snippet)}</p>
                   </div>
                   <ChevronRight size={14} className="text-brand-text-muted mt-1 shrink-0" />
                 </button>
@@ -457,51 +499,79 @@ export default function Inbox() {
         <div className="lg:col-span-3 card flex flex-col overflow-hidden">
           {selectedEmail ? (
             <>
-              <div className="px-6 py-4 border-b border-brand-border-l">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <h3 className="text-base font-semibold truncate">{selectedEmail.subject || '(No subject)'}</h3>
-                    <p className="text-sm text-brand-text-sec mt-1">{selectedEmail.from}</p>
-                    <div className="flex items-center gap-2 mt-1">
-                      <p className="text-xs text-brand-text-muted">{selectedEmail.date}</p>
-                      {(() => {
-                        const label = getEmailLabel(selectedEmail);
-                        if (!label) return null;
-                        return (
-                          <span
-                            className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full"
-                            style={{
-                              backgroundColor: label.colors.bg,
-                              color: label.colors.text,
-                              border: `1px solid ${label.colors.border}`,
-                            }}
-                          >
-                            <Tag size={9} />
-                            {label.brandName} — {label.stageLabel}
-                          </span>
-                        );
-                      })()}
+              {/* Email header â sender info + actions */}
+              <div className="px-6 py-5 border-b border-brand-border-l" style={{ background: 'var(--c-surface-alt)' }}>
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-start gap-3.5 min-w-0 flex-1">
+                    {/* Sender avatar */}
+                    <div className="w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-semibold shrink-0 mt-0.5"
+                      style={{ backgroundColor: '#6b1309' }}>
+                      {getInitials(extractDisplayName(selectedEmail.from))}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <h3 className="text-base font-semibold leading-snug" style={{ color: 'var(--c-text)' }}>
+                        {selectedEmail.subject || '(No subject)'}
+                      </h3>
+                      <div className="flex items-center gap-1.5 mt-1.5">
+                        <span className="text-sm font-medium" style={{ color: 'var(--c-text-sec)' }}>
+                          {extractDisplayName(selectedEmail.from)}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1 mt-0.5">
+                        <AtSign size={11} className="text-brand-text-muted shrink-0" />
+                        <span className="text-xs text-brand-text-muted truncate">
+                          {extractEmail(selectedEmail.from) || ''}
+                        </span>
+                      </div>
+                      <div className="flex items-center flex-wrap gap-2 mt-2">
+                        <div className="flex items-center gap-1">
+                          <Clock size={11} className="text-brand-text-muted" />
+                          <span className="text-xs text-brand-text-muted">{formatEmailDate(selectedEmail.date)}</span>
+                        </div>
+                        {(() => {
+                          const label = getEmailLabel(selectedEmail);
+                          if (!label) return null;
+                          return (
+                            <span
+                              className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full"
+                              style={{
+                                backgroundColor: label.colors.bg,
+                                color: label.colors.text,
+                                border: `1px solid ${label.colors.border}`,
+                              }}
+                            >
+                              <Tag size={9} />
+                              {label.brandName} â {label.stageLabel}
+                            </span>
+                          );
+                        })()}
+                      </div>
                     </div>
                   </div>
-                  <button onClick={() => { setImportForm({ brand: selectedEmail.from?.replace(/<.+>/, '').trim().split(' ')[0] || '', type: 'unclear' }); setImportOpen(true); }} className="btn btn-primary btn-sm shrink-0">
+                  <button onClick={() => { setImportForm({ brand: extractDisplayName(selectedEmail.from).split(' ')[0] || '', type: 'unclear' }); setImportOpen(true); }} className="btn btn-primary btn-sm shrink-0">
                     <Plus size={14} /> Import as Opp
                   </button>
                 </div>
               </div>
-              <div className="flex-1 overflow-y-auto px-6 py-5">
+
+              {/* Email body */}
+              <div className="flex-1 overflow-y-auto px-7 py-6">
                 {fullBody ? (
                   <ThreadView
                     body={fullBody}
-                    senderName={selectedEmail.from?.replace(/<.+>/, '').trim()}
-                    senderDate={selectedEmail.date}
+                    senderName={extractDisplayName(selectedEmail.from)}
+                    senderDate={formatEmailDate(selectedEmail.date)}
                   />
                 ) : (
-                  <p className="text-sm text-brand-text-sec leading-relaxed">{selectedEmail.snippet}</p>
+                  <p className="text-sm leading-relaxed" style={{ color: 'var(--c-text-sec)', lineHeight: '1.75' }}>
+                    {decodeHtmlEntities(selectedEmail.snippet)}
+                  </p>
                 )}
               </div>
             </>
           ) : (
-            <div className="flex-1 flex items-center justify-center text-brand-text-muted">
+            <div className="flex-1 flex flex-col items-center justify-center text-brand-text-muted gap-3">
+              <Mail size={40} className="opacity-20" />
               <p className="text-sm">Select an email to view details</p>
             </div>
           )}
