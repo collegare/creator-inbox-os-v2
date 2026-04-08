@@ -212,6 +212,94 @@ function ThreadView({ body, senderName, senderDate }) {
 }
 
 /* ============================================================
+   FullThreadView â renders all messages in a Gmail thread
+   Each message is shown newest-first with sender avatar, date, body
+   ============================================================ */
+function FullThreadView({ messages }) {
+  const [collapsedMsgs, setCollapsedMsgs] = useState({});
+
+  // Show messages newest first (most recent on top)
+  const sorted = useMemo(() => {
+    return [...messages].sort((a, b) => new Date(b.date) - new Date(a.date));
+  }, [messages]);
+
+  const toggleMsg = (idx) => {
+    setCollapsedMsgs(prev => ({ ...prev, [idx]: !prev[idx] }));
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 mb-2">
+        <Reply size={13} style={{ color: 'var(--c-text-muted)' }} />
+        <span className="text-xs font-medium" style={{ color: 'var(--c-text-muted)' }}>
+          {messages.length} messages in this thread
+        </span>
+      </div>
+      {sorted.map((msg, idx) => {
+        const isFirst = idx === 0; // most recent message
+        const isCollapsed = !isFirst && collapsedMsgs[idx] !== true; // older messages collapsed by default
+        const senderName = extractDisplayName(msg.from);
+        const initials = getInitials(senderName);
+        const senderEmail = extractEmail(msg.from);
+
+        return (
+          <div key={msg.id || idx} className="rounded-lg overflow-hidden" style={{ border: '1px solid var(--c-border-light)' }}>
+            {/* Message header â clickable for older messages */}
+            <button
+              onClick={() => !isFirst && toggleMsg(idx)}
+              className={`w-full flex items-start gap-3 px-4 py-3 text-left transition-colors ${!isFirst ? 'hover:bg-brand-surface-alt cursor-pointer' : 'cursor-default'}`}
+              style={{ backgroundColor: isFirst ? 'transparent' : 'var(--c-surface-alt)' }}
+            >
+              <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-semibold shrink-0 mt-0.5"
+                style={{ backgroundColor: '#6b1309' }}>
+                {initials}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold" style={{ color: 'var(--c-text)' }}>
+                    {senderName}
+                  </span>
+                  {isFirst && (
+                    <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full"
+                      style={{ backgroundColor: 'var(--c-surface-alt)', color: 'var(--c-text-muted)' }}>
+                      Latest
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 mt-0.5">
+                  {senderEmail && (
+                    <span className="text-[11px] text-brand-text-muted">{senderEmail}</span>
+                  )}
+                  <span className="text-[11px] text-brand-text-muted">Â· {formatEmailDate(msg.date)}</span>
+                </div>
+                {!isFirst && isCollapsed && msg.body && (
+                  <p className="text-[11px] truncate mt-1" style={{ color: 'var(--c-text-muted)' }}>
+                    {msg.body.substring(0, 140)}...
+                  </p>
+                )}
+              </div>
+              {!isFirst && (
+                isCollapsed
+                  ? <ChevronDown size={14} style={{ color: 'var(--c-text-muted)' }} className="shrink-0 mt-1" />
+                  : <ChevronUp size={14} style={{ color: 'var(--c-text-muted)' }} className="shrink-0 mt-1" />
+              )}
+            </button>
+
+            {/* Message body â always shown for newest, toggled for older */}
+            {(isFirst || !isCollapsed) && (
+              <div className="px-5 py-4 text-sm whitespace-pre-wrap font-sans"
+                style={{ color: 'var(--c-text-sec)', lineHeight: '1.8', letterSpacing: '0.01em', borderTop: '1px solid var(--c-border-light)' }}>
+                {msg.body || '(No content)'}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ============================================================
    Stage badge colors â reused for labels
    ============================================================ */
 const STAGE_COLORS = {
@@ -235,11 +323,12 @@ const STAGE_COLORS = {
 export default function Inbox() {
   const { user, accessToken, signIn, signOut } = useAuth();
   const { addEmails, emails, addOpp, opportunities } = useData();
-  const { fetchMessages, fetchFullMessage, loading, error } = useGmail();
+  const { fetchMessages, fetchFullMessage, fetchThread, loading, error } = useGmail();
   const toast = useToast();
 
   const [selectedEmail, setSelectedEmail] = useState(null);
   const [fullBody, setFullBody] = useState('');
+  const [threadMessages, setThreadMessages] = useState([]);
   const [importOpen, setImportOpen] = useState(false);
   const [importForm, setImportForm] = useState({ brand: '', type: 'unclear' });
   const [searchQuery, setSearchQuery] = useState('');
@@ -333,13 +422,28 @@ export default function Inbox() {
     }
   }, [fetchMessages, addEmails, toast, error]);
 
-  /* ---------- View Full Email ---------- */
+  /* ---------- View Full Email (fetch entire thread) ---------- */
   const handleSelectEmail = useCallback(async (email) => {
     setSelectedEmail(email);
     setFullBody('');
+    setThreadMessages([]);
+
+    // Fetch the full thread for this email
+    if (email.threadId) {
+      const msgs = await fetchThread(email.threadId);
+      if (msgs.length > 0) {
+        setThreadMessages(msgs);
+        // Also set fullBody to the selected message's body for fallback
+        const thisMsg = msgs.find(m => m.id === email.id);
+        if (thisMsg) setFullBody(thisMsg.body);
+        return;
+      }
+    }
+
+    // Fallback: fetch just the single message
     const full = await fetchFullMessage(email.id);
     if (full) setFullBody(full.body);
-  }, [fetchFullMessage]);
+  }, [fetchThread, fetchFullMessage]);
 
   /* ---------- Import as Opportunity ---------- */
   const handleImport = () => {
@@ -554,9 +658,11 @@ export default function Inbox() {
                 </div>
               </div>
 
-              {/* Email body */}
+              {/* Email body / thread */}
               <div className="flex-1 overflow-y-auto px-7 py-6">
-                {fullBody ? (
+                {threadMessages.length > 1 ? (
+                  <FullThreadView messages={threadMessages} />
+                ) : fullBody ? (
                   <ThreadView
                     body={fullBody}
                     senderName={extractDisplayName(selectedEmail.from)}
