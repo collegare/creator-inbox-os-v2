@@ -102,16 +102,33 @@ export default function Inbox() {
     scope: 'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/calendar',
   });
 
-  /* ---------- Fetch Emails (50 from primary) ---------- */
+  /* ---------- Fetch Emails (50, no category filter) ---------- */
   const handleFetch = useCallback(async () => {
-    const msgs = await fetchMessages('category:primary', 50);
+    const msgs = await fetchMessages('in:inbox', 50);
     if (msgs.length) {
       addEmails(msgs);
-      toast?.(`Imported ${msgs.length} emails`);
-    } else {
+      toast?.(`Synced ${msgs.length} emails`);
+    } else if (!error) {
       toast?.('No new emails found');
     }
-  }, [fetchMessages, addEmails, toast]);
+  }, [fetchMessages, addEmails, toast, error]);
+
+  /* ---------- Force refresh: clear stored emails and re-sync ---------- */
+  const handleForceRefresh = useCallback(async () => {
+    // Clear stored emails first
+    try { localStorage.removeItem('cio_imported_emails'); } catch {}
+    addEmails([]); // reset state (will be overwritten)
+    // Now fetch fresh
+    const msgs = await fetchMessages('in:inbox', 50);
+    if (msgs.length) {
+      // Replace all emails with fresh data
+      try { localStorage.setItem('cio_imported_emails', JSON.stringify(msgs)); } catch {}
+      addEmails(msgs);
+      toast?.(`Refreshed — ${msgs.length} emails loaded`);
+    } else if (!error) {
+      toast?.('No emails found in inbox');
+    }
+  }, [fetchMessages, addEmails, toast, error]);
 
   /* ---------- View Full Email ---------- */
   const handleSelectEmail = useCallback(async (email) => {
@@ -187,6 +204,9 @@ export default function Inbox() {
           <button onClick={handleFetch} disabled={loading} className="btn btn-secondary btn-sm">
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
             {loading ? 'Syncing...' : 'Sync Emails'}
+          </button>
+          <button onClick={handleForceRefresh} disabled={loading} className="btn btn-ghost btn-sm" title="Clear cached emails and re-sync from Gmail">
+            Refresh All
           </button>
           <button onClick={signOut} className="btn btn-ghost btn-sm">Disconnect</button>
         </div>
