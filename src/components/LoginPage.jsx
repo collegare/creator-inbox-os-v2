@@ -188,7 +188,7 @@ export default function LoginPage({ onLogin }) {
           {/* Legal links */}
           <div className="flex items-center justify-center gap-4 mt-4">
             <a
-              href="https://collegarestudio.com/privacy-policy"
+              href="/privacy-policy.html"
               target="_blank"
               rel="noopener noreferrer"
               className="text-[11px] text-brand-text-muted hover:text-brand-text-sec transition-colors"
@@ -197,7 +197,7 @@ export default function LoginPage({ onLogin }) {
             </a>
             <span className="text-brand-border text-[11px]">&middot;</span>
             <a
-              href="https://collegarestudio.com/terms-of-service"
+              href="/terms-of-service.html"
               target="_blank"
               rel="noopener noreferrer"
               className="text-[11px] text-brand-text-muted hover:text-brand-text-sec transition-colors"
