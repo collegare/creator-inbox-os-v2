@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { GoogleOAuthProvider } from '@react-oauth/google';
-import { DataProvider, AuthProvider } from './contexts';
+import { DataProvider, AuthProvider, SubscriberAuthProvider, useSubscriberAuth } from './contexts';
 import { ToastProvider } from './components/Common';
 import Layout from './components/Layout';
+import LoginPage from './components/LoginPage';
 import Dashboard from './components/Dashboard';
 import Pipeline from './components/Pipeline';
 import Opportunities from './components/Opportunities';
@@ -44,9 +45,14 @@ const TAB_COMPONENTS = {
   settings:      Settings,
 };
 
-export default function App() {
+function AppInner() {
+  const { subscriberEmail, subscriberLogin } = useSubscriberAuth();
   const [activeTab, setActiveTab] = useState('dashboard');
   const ActiveComponent = TAB_COMPONENTS[activeTab] || Dashboard;
+
+  if (!subscriberEmail) {
+    return <LoginPage onLogin={subscriberLogin} />;
+  }
 
   const inner = (
     <AuthProvider>
@@ -65,4 +71,12 @@ export default function App() {
     return <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>{inner}</GoogleOAuthProvider>;
   }
   return inner;
+}
+
+export default function App() {
+  return (
+    <SubscriberAuthProvider>
+      <AppInner />
+    </SubscriberAuthProvider>
+  );
 }

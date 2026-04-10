@@ -23,6 +23,35 @@ export function ThemeProvider({ children }) {
 export const useTheme = () => useContext(ThemeCtx);
 
 /* ============================================================
+   SUBSCRIBER AUTH CONTEXT — Email-based app gate
+   ============================================================ */
+const SubscriberAuthCtx = createContext();
+
+export function SubscriberAuthProvider({ children }) {
+  const [subscriberEmail, setSubscriberEmail] = useState(() => {
+    try { return localStorage.getItem('cio_subscriber') || null; } catch { return null; }
+  });
+
+  const subscriberLogin = useCallback((email) => {
+    setSubscriberEmail(email);
+    try { localStorage.setItem('cio_subscriber', email); } catch {}
+  }, []);
+
+  const subscriberLogout = useCallback(() => {
+    setSubscriberEmail(null);
+    try { localStorage.removeItem('cio_subscriber'); } catch {}
+  }, []);
+
+  return (
+    <SubscriberAuthCtx.Provider value={{ subscriberEmail, subscriberLogin, subscriberLogout }}>
+      {children}
+    </SubscriberAuthCtx.Provider>
+  );
+}
+
+export const useSubscriberAuth = () => useContext(SubscriberAuthCtx);
+
+/* ============================================================
    AUTH CONTEXT — Google OAuth for Gmail / Calendar
    ============================================================ */
 const AuthCtx = createContext();

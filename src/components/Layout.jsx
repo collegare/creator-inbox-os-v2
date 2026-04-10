@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import { useTheme } from '../contexts';
+import { useTheme, useSubscriberAuth } from '../contexts';
 import {
   Home, Columns3, Briefcase, Mail, MessageSquareText, Sparkles,
-  CalendarDays, Search, ListChecks, Settings, Menu, X, Moon, Sun,
+  CalendarDays, Search, ListChecks, Settings, Menu, X, Moon, Sun, LogOut,
 } from 'lucide-react';
 
 const ICON_MAP = { Home, Columns3, Briefcase, Mail, MessageSquareText, Sparkles, CalendarDays, Search, ListChecks, Settings };
@@ -10,6 +10,7 @@ const ICON_MAP = { Home, Columns3, Briefcase, Mail, MessageSquareText, Sparkles,
 export default function Layout({ tabs, activeTab, onTabChange, children }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const { theme, toggle } = useTheme();
+  const { subscriberEmail, subscriberLogout } = useSubscriberAuth();
 
   const handleNav = (id) => { onTabChange(id); setMobileOpen(false); };
 
@@ -54,11 +55,25 @@ export default function Layout({ tabs, activeTab, onTabChange, children }) {
         </nav>
 
         {/* Footer */}
-        <div className="px-6 pb-6 pt-4 border-t border-white/[0.08] flex items-center justify-between">
-          <span className="text-[11px] opacity-35">v2.0 &middot; Collegare Studio</span>
-          <button onClick={toggle} className="p-1.5 rounded hover:bg-white/10 transition-colors text-white/50 hover:text-white/80">
-            {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
-          </button>
+        <div className="px-4 pb-6 pt-4 border-t border-white/[0.08]">
+          {subscriberEmail && (
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-[11px] text-white/50 truncate max-w-[160px]">{subscriberEmail}</span>
+              <button
+                onClick={subscriberLogout}
+                title="Sign out"
+                className="p-1.5 rounded hover:bg-white/10 transition-colors text-white/40 hover:text-white/80 shrink-0"
+              >
+                <LogOut size={15} />
+              </button>
+            </div>
+          )}
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] opacity-35">v2.0 &middot; Collegare Studio</span>
+            <button onClick={toggle} className="p-1.5 rounded hover:bg-white/10 transition-colors text-white/50 hover:text-white/80">
+              {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+            </button>
+          </div>
         </div>
       </aside>
 
