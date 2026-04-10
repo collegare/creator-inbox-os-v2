@@ -18,10 +18,10 @@ export default function Layout({ tabs, activeTab, onTabChange, children }) {
     <div className="flex min-h-screen">
       {/* ---------- SIDEBAR ---------- */}
       <aside className={`
-        fixed inset-y-0 left-0 z-50 flex flex-col w-[260px] bg-brand-text text-white
+        fixed inset-y-0 left-0 z-50 flex flex-col w-[260px] text-white
         transition-transform duration-300
         max-md:-translate-x-full ${mobileOpen ? 'max-md:translate-x-0' : ''}
-      `}>
+      `} style={{ backgroundColor: '#2d2319' }}>
         {/* Brand */}
         <div className="flex items-center gap-3.5 px-6 pt-7 pb-5 border-b border-white/[0.08]">
           <div className="w-10 h-10 rounded-sm flex items-center justify-center text-lg font-bold bg-brand-primary text-white shrink-0">C</div>
@@ -83,7 +83,7 @@ export default function Layout({ tabs, activeTab, onTabChange, children }) {
       )}
 
       {/* ---------- MOBILE HEADER ---------- */}
-      <header className="fixed top-0 left-0 right-0 h-[60px] bg-brand-text text-white z-30 px-4 flex items-center justify-between md:hidden">
+      <header className="fixed top-0 left-0 right-0 h-[60px] text-white z-30 px-4 flex items-center justify-between md:hidden" style={{ backgroundColor: '#2d2319' }}>
         <button onClick={() => setMobileOpen(true)} className="p-1 text-white">
           <Menu size={24} />
         </button>
