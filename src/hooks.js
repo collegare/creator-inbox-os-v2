@@ -169,7 +169,133 @@ export function useGmail() {
     } catch { return []; }
   }, [accessToken]);
 
-  return { fetchMessages, fetchFullMessage, fetchThread, loading, error };
+  /* ── Encode a plain-text email into base64url RFC 2822 format ── */
+  const encodeRfc2822 = (to, subject, body) => {
+    const lines = [
+      `To: ${to}`,
+      `Subject: ${subject}`,
+      'MIME-Version: 1.0',
+      'Content-Type: text/plain; charset=UTF-8',
+      'Content-Transfer-Encoding: 8bit',
+      '',
+      body,
+    ].join('\r\n');
+    const bytes = new TextEncoder().encode(lines);
+    const binStr = Array.from(bytes, b => String.fromCharCode(b)).join('');
+    return btoa(binStr).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  };
+
+  /* ── Archive a message (remove from INBOX) ── */
+  const archiveMessage = useCallback(async (messageId) => {
+    if (!accessToken) return false;
+    try {
+      const res = await fetch(
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}/modify`,
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ removeLabelIds: ['INBOX'] }),
+        }
+      );
+      return res.ok;
+    } catch { return false; }
+  }, [accessToken]);
+
+  /* ── Create a Gmail draft ── */
+  const createDraft = useCallback(async ({ to, subject, body, threadId }) => {
+    if (!accessToken) return null;
+    try {
+      const raw = encodeRfc2822(to, subject, body);
+      const payload = { message: { raw } };
+      if (threadId) payload.message.threadId = threadId;
+      const res = await fetch(
+        'https://gmail.googleapis.com/gmail/v1/users/me/drafts',
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        }
+      );
+      if (!res.ok) return null;
+      return await res.json();
+    } catch { return null; }
+  }, [accessToken]);
+
+  /* ── Get or create a Gmail label by name, return its ID ── */
+  const getOrCreateLabel = useCallback(async (name) => {
+    if (!accessToken) return null;
+    try {
+      const listRes = await fetch(
+        'https://gmail.googleapis.com/gmail/v1/users/me/labels',
+        { headers: { Authorization: `Bearer ${accessToken}` } }
+      );
+      if (!listRes.ok) return null;
+      const listData = await listRes.json();
+      const existing = (listData.labels || []).find(l => l.name === name);
+      if (existing) return existing.id;
+      const createRes = await fetch(
+        'https://gmail.googleapis.com/gmail/v1/users/me/labels',
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, labelListVisibility: 'labelShow', messageListVisibility: 'show' }),
+        }
+      );
+      if (!createRes.ok) return null;
+      const created = await createRes.json();
+      return created.id;
+    } catch { return null; }
+  }, [accessToken]);
+
+  /* ── Apply a label to a message ── */
+  const applyLabel = useCallback(async (messageId, labelId) => {
+    if (!accessToken || !labelId) return false;
+    try {
+      const res = await fetch(
+        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}/modify`,
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ addLabelIds: [labelId] }),
+        }
+      );
+      return res.ok;
+    } catch { return false; }
+  }, [accessToken]);
+
+  /* ── Smart categorize: scan messages for brand-deal keywords, apply Gmail label ── */
+  const BRAND_KEYWORDS = [
+    'collaboration', 'collab', 'partnership', 'sponsored', 'sponsorship',
+    'gifted', 'gifting', 'paid partnership', 'affiliate', 'campaign',
+    'brand deal', 'pr package', 'media kit', 'rate card', 'deliverables',
+    'ambassador', 'influencer', 'ugc', 'content creator', 'creator',
+  ];
+
+  const categorizeBrandEmails = useCallback(async (messages) => {
+    if (!accessToken || !messages?.length) return 0;
+    const labelId = await getOrCreateLabel('CIO · Brand Deal');
+    if (!labelId) return 0;
+    const matches = messages.filter(m => {
+      const text = `${m.subject || ''} ${m.snippet || ''}`.toLowerCase();
+      return BRAND_KEYWORDS.some(kw => text.includes(kw));
+    });
+    await Promise.all(matches.map(m => applyLabel(m.id, labelId)));
+    return matches.length;
+  }, [accessToken, getOrCreateLabel, applyLabel]);
+
+  /* ── Apply a deal-type label when an email is imported as an opportunity ── */
+  const applyOppLabel = useCallback(async (messageId, type) => {
+    if (!accessToken || !messageId || !type) return;
+    const name = `CIO · ${type.charAt(0).toUpperCase() + type.slice(1)}`;
+    const labelId = await getOrCreateLabel(name);
+    if (labelId) await applyLabel(messageId, labelId);
+  }, [accessToken, getOrCreateLabel, applyLabel]);
+
+  return {
+    fetchMessages, fetchFullMessage, fetchThread,
+    archiveMessage, createDraft, categorizeBrandEmails, applyOppLabel,
+    loading, error,
+  };
 }
 
 /* ============================================================

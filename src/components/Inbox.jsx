@@ -2,9 +2,10 @@ import { useState, useCallback, useMemo } from 'react';
 import { useAuth, useData } from '../contexts';
 import { useGmail } from '../hooks';
 import { PageHeader, EmptyState, Modal, useToast } from './Common';
-import { Mail, RefreshCw, Plus, Inbox as InboxIcon, LogIn, ChevronRight, Search, X, Tag, ChevronDown, ChevronUp, User, Reply, Clock, AtSign } from 'lucide-react';
+import { Mail, RefreshCw, Plus, Inbox as InboxIcon, LogIn, ChevronRight, Search, X, Tag, ChevronDown, ChevronUp, Reply, Clock, AtSign, Archive, Wand2, Sparkles } from 'lucide-react';
 import { useGoogleLogin } from '@react-oauth/google';
 import { OPP_TYPES, PIPELINE_STAGES, fmtDate } from '../utils';
+import { REPLY_TEMPLATES } from '../data';
 
 /** Decode HTML entities in Gmail snippets */
 function decodeHtmlEntities(str) {
@@ -59,6 +60,15 @@ function extractEmail(fromStr) {
    Prefers email domain (e.g. sarah@glossier.com → "Glossier")
    Falls back to display name for personal email providers
    ============================================================ */
+/* ============================================================
+   Helper: fill template placeholders with real sender values
+   ============================================================ */
+function fillTemplate(text, contactName, brandName) {
+  return text
+    .replace(/\[Contact Name\]/gi, contactName || '[Contact Name]')
+    .replace(/\[Brand Name\]/gi, brandName || '[Brand Name]');
+}
+
 const PERSONAL_DOMAINS = new Set([
   'gmail', 'yahoo', 'hotmail', 'outlook', 'icloud', 'aol',
   'protonmail', 'me', 'live', 'msn', 'ymail',
@@ -345,7 +355,7 @@ const STAGE_COLORS = {
 export default function Inbox() {
   const { user, accessToken, signIn, signOut } = useAuth();
   const { addEmails, emails, addOpp, opportunities } = useData();
-  const { fetchMessages, fetchFullMessage, fetchThread, loading, error } = useGmail();
+  const { fetchMessages, fetchFullMessage, fetchThread, archiveMessage, createDraft, categorizeBrandEmails, applyOppLabel, loading, error } = useGmail();
   const toast = useToast();
 
   const [selectedEmail, setSelectedEmail] = useState(null);
@@ -354,6 +364,11 @@ export default function Inbox() {
   const [importOpen, setImportOpen] = useState(false);
   const [importForm, setImportForm] = useState({ brand: '', contact: '', type: 'unclear' });
   const [searchQuery, setSearchQuery] = useState('');
+  const [draftOpen, setDraftOpen] = useState(false);
+  const [draftTemplateId, setDraftTemplateId] = useState(REPLY_TEMPLATES[0]?.id || '');
+  const [draftBody, setDraftBody] = useState('');
+  const [draftSending, setDraftSending] = useState(false);
+  const [categorizing, setCategorizing] = useState(false);
 
   const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 
@@ -413,7 +428,7 @@ export default function Inbox() {
       }
     },
     onError: () => toast?.('Login failed', 'error'),
-    scope: 'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/calendar',
+    scope: 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/calendar',
   });
 
   /* ---------- Fetch Emails (50, no category filter) ---------- */
@@ -468,7 +483,7 @@ export default function Inbox() {
   }, [fetchThread, fetchFullMessage]);
 
   /* ---------- Import as Opportunity ---------- */
-  const handleImport = () => {
+  const handleImport = async () => {
     if (!selectedEmail || !importForm.brand) return;
     addOpp({
       brand: importForm.brand,
@@ -483,10 +498,85 @@ export default function Inbox() {
       followUpDate: '',
       notes: `Imported from email: ${selectedEmail.subject}`,
     });
+    // Auto-apply Gmail label for this deal type
+    applyOppLabel(selectedEmail.id, importForm.type);
     toast?.('Imported as opportunity');
     setImportOpen(false);
     setImportForm({ brand: '', contact: '', type: 'unclear' });
   };
+
+  /* ---------- Archive email ---------- */
+  const handleArchive = useCallback(async () => {
+    if (!selectedEmail) return;
+    const ok = await archiveMessage(selectedEmail.id);
+    if (ok) {
+      toast?.('Archived in Gmail');
+      // Remove from local list
+      addEmails(emails.filter(e => e.id !== selectedEmail.id));
+      setSelectedEmail(null);
+      setFullBody('');
+      setThreadMessages([]);
+    } else {
+      toast?.('Archive failed — please try again', 'error');
+    }
+  }, [selectedEmail, archiveMessage, emails, addEmails, toast]);
+
+  /* ---------- Smart Categorize ---------- */
+  const handleCategorize = useCallback(async () => {
+    if (!emails.length) return;
+    setCategorizing(true);
+    try {
+      const count = await categorizeBrandEmails(emails);
+      toast?.(count > 0 ? `Labelled ${count} brand deal email${count !== 1 ? 's' : ''} in Gmail` : 'No brand deal emails detected');
+    } catch {
+      toast?.('Categorization failed', 'error');
+    } finally {
+      setCategorizing(false);
+    }
+  }, [emails, categorizeBrandEmails, toast]);
+
+  /* ---------- Open Draft Reply modal ---------- */
+  const handleOpenDraft = useCallback(() => {
+    if (!selectedEmail) return;
+    const contactName = extractDisplayName(selectedEmail.from);
+    const brandName = extractCompanyName(selectedEmail.from);
+    const firstTemplate = REPLY_TEMPLATES[0];
+    const filled = fillTemplate(firstTemplate?.text || '', contactName, brandName);
+    setDraftTemplateId(firstTemplate?.id || '');
+    setDraftBody(filled);
+    setDraftOpen(true);
+  }, [selectedEmail]);
+
+  /* ---------- When template selection changes ---------- */
+  const handleDraftTemplateChange = useCallback((templateId) => {
+    const tpl = REPLY_TEMPLATES.find(t => t.id === templateId);
+    if (!tpl || !selectedEmail) return;
+    const contactName = extractDisplayName(selectedEmail.from);
+    const brandName = extractCompanyName(selectedEmail.from);
+    setDraftTemplateId(templateId);
+    setDraftBody(fillTemplate(tpl.text, contactName, brandName));
+  }, [selectedEmail]);
+
+  /* ---------- Create Gmail draft ---------- */
+  const handleCreateDraft = useCallback(async () => {
+    if (!selectedEmail || !draftBody.trim()) return;
+    setDraftSending(true);
+    try {
+      const to = extractEmail(selectedEmail.from);
+      const subject = selectedEmail.subject?.startsWith('Re:')
+        ? selectedEmail.subject
+        : `Re: ${selectedEmail.subject || ''}`;
+      const draft = await createDraft({ to, subject, body: draftBody, threadId: selectedEmail.threadId });
+      if (draft) {
+        toast?.('Draft saved to Gmail');
+        setDraftOpen(false);
+      } else {
+        toast?.('Failed to create draft — please try again', 'error');
+      }
+    } finally {
+      setDraftSending(false);
+    }
+  }, [selectedEmail, draftBody, createDraft, toast]);
 
   /* ---------- Not connected state ---------- */
   if (!GOOGLE_CLIENT_ID) {
@@ -528,7 +618,11 @@ export default function Inbox() {
   return (
     <div className="animate-fadeIn">
       <PageHeader title="Inbox" subtitle={`Connected as ${user?.email || 'unknown'}`}>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
+          <button onClick={handleCategorize} disabled={categorizing || !emails.length} className="btn btn-ghost btn-sm" title="Scan emails for brand deals and apply Gmail labels">
+            <Sparkles size={14} className={categorizing ? 'animate-pulse' : ''} />
+            {categorizing ? 'Categorizing...' : 'Categorize'}
+          </button>
           <button onClick={handleFetch} disabled={loading} className="btn btn-secondary btn-sm">
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
             {loading ? 'Syncing...' : 'Sync Emails'}
@@ -673,9 +767,28 @@ export default function Inbox() {
                       </div>
                     </div>
                   </div>
-                  <button onClick={() => { setImportForm({ brand: extractCompanyName(selectedEmail.from), contact: extractDisplayName(selectedEmail.from), type: 'unclear' }); setImportOpen(true); }} className="btn btn-primary btn-sm shrink-0">
-                    <Plus size={14} /> Import as Opp
-                  </button>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      onClick={handleOpenDraft}
+                      className="btn btn-ghost btn-sm"
+                      title="Draft a reply using a template — saves to Gmail Drafts"
+                    >
+                      <Wand2 size={14} /> Draft Reply
+                    </button>
+                    <button
+                      onClick={handleArchive}
+                      className="btn btn-ghost btn-sm"
+                      title="Archive this email in Gmail"
+                    >
+                      <Archive size={14} /> Archive
+                    </button>
+                    <button
+                      onClick={() => { setImportForm({ brand: extractCompanyName(selectedEmail.from), contact: extractDisplayName(selectedEmail.from), type: 'unclear' }); setImportOpen(true); }}
+                      className="btn btn-primary btn-sm"
+                    >
+                      <Plus size={14} /> Import as Opp
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -704,6 +817,58 @@ export default function Inbox() {
           )}
         </div>
       </div>
+
+      {/* ---- Draft Reply Modal ---- */}
+      <Modal open={draftOpen} onClose={() => setDraftOpen(false)} title="Draft Reply">
+        <p className="text-xs text-brand-text-muted mb-4">
+          Saves a draft directly to your Gmail Drafts folder. Placeholders filled from the sender's email.
+        </p>
+        <div className="space-y-4 mb-5">
+          <div>
+            <label className="block text-xs font-medium text-brand-text-sec mb-1.5">Template</label>
+            <select
+              className="select"
+              value={draftTemplateId}
+              onChange={e => handleDraftTemplateChange(e.target.value)}
+            >
+              {REPLY_TEMPLATES.map(t => (
+                <option key={t.id} value={t.id}>{t.title}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-brand-text-sec mb-1.5">
+              Draft Body <span className="text-brand-text-muted font-normal">(edit before saving)</span>
+            </label>
+            <textarea
+              className="input font-mono text-xs"
+              rows={12}
+              value={draftBody}
+              onChange={e => setDraftBody(e.target.value)}
+            />
+          </div>
+          {selectedEmail && (
+            <p className="text-xs text-brand-text-muted">
+              To: <span className="text-brand-text-sec">{extractEmail(selectedEmail.from)}</span>
+              &nbsp;·&nbsp;
+              Subject: <span className="text-brand-text-sec">
+                {selectedEmail.subject?.startsWith('Re:') ? selectedEmail.subject : `Re: ${selectedEmail.subject}`}
+              </span>
+            </p>
+          )}
+        </div>
+        <div className="flex justify-end gap-3">
+          <button className="btn btn-ghost" onClick={() => setDraftOpen(false)}>Cancel</button>
+          <button
+            className="btn btn-primary"
+            onClick={handleCreateDraft}
+            disabled={draftSending || !draftBody.trim()}
+          >
+            <Wand2 size={14} />
+            {draftSending ? 'Saving...' : 'Save to Gmail Drafts'}
+          </button>
+        </div>
+      </Modal>
 
       {/* ---- Import Modal ---- */}
       <Modal open={importOpen} onClose={() => setImportOpen(false)} title="Import as Opportunity" size="sm">
