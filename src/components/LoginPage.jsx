@@ -179,11 +179,32 @@ export default function LoginPage({ onLogin }) {
             </button>
           </form>
 
-          {/* Footer links */}
+          {/* Need access */}
           <p className="text-center text-xs text-brand-text-muted mt-8">
             Need access?{' '}
             <span className="text-brand-text-sec">Contact hello@collegarestudio.com</span>
           </p>
+
+          {/* Legal links */}
+          <div className="flex items-center justify-center gap-4 mt-4">
+            <a
+              href="https://collegarestudio.com/privacy-policy"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[11px] text-brand-text-muted hover:text-brand-text-sec transition-colors"
+            >
+              Privacy Policy
+            </a>
+            <span className="text-brand-border text-[11px]">&middot;</span>
+            <a
+              href="https://collegarestudio.com/terms-of-service"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[11px] text-brand-text-muted hover:text-brand-text-sec transition-colors"
+            >
+              Terms of Service
+            </a>
+          </div>
         </div>
       </div>
     </div>
