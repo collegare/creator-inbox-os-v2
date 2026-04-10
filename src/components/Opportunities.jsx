@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useData } from '../contexts';
 import { Modal, ConfirmDialog, PageHeader, EmptyState, useToast } from './Common';
-import { fmtDate, isDue, OPP_TYPES, PRIORITIES, PIPELINE_STAGES, statusBadge } from '../utils';
+import { fmtDate, isDue, OPP_TYPES, PRIORITIES, PIPELINE_STAGES, statusBadge, parseRate, fmtCurrency } from '../utils';
 import { useExport } from '../hooks';
 import {
   Plus, Pencil, Trash2, Briefcase, Filter, Download,
@@ -127,7 +127,7 @@ export default function Opportunities() {
                 <div className="flex flex-col gap-1.5 text-[13px] text-brand-text-sec">
                   {o.email && <div className="flex items-center gap-2"><Mail size={14} className="text-brand-text-muted shrink-0" /> {o.email}</div>}
                   {o.deliverables && <div className="flex items-center gap-2"><Package size={14} className="text-brand-text-muted shrink-0" /> {o.deliverables}</div>}
-                  {o.rate && <div className="flex items-center gap-2"><DollarSign size={14} className="text-brand-text-muted shrink-0" /> {o.rate}</div>}
+                  {o.rate && <div className="flex items-center gap-2"><DollarSign size={14} className="text-brand-text-muted shrink-0" /> {fmtCurrency(parseRate(o.rate))}</div>}
                   {o.lastContactDate && <div className="flex items-center gap-2"><CalendarCheck size={14} className="text-brand-text-muted shrink-0" /> Last: {fmtDate(o.lastContactDate)}</div>}
                   {o.followUpDate && (
                     <div className={`flex items-center gap-2 ${dueSoon ? 'text-brand-danger font-medium' : ''}`}>
@@ -156,7 +156,21 @@ export default function Opportunities() {
             <div><label className="block text-xs font-medium text-brand-text-sec mb-1.5">Priority</label><select className="select" value={form.priority} onChange={e => set('priority', e.target.value)}>{PRIORITIES.map(p => <option key={p} value={p}>{p}</option>)}</select></div>
             <div><label className="block text-xs font-medium text-brand-text-sec mb-1.5">Status</label><select className="select" value={form.status} onChange={e => set('status', e.target.value)}>{STATUSES.map(s => <option key={s} value={s}>{s}</option>)}</select></div>
             <div><label className="block text-xs font-medium text-brand-text-sec mb-1.5">Deliverables</label><input className="input" value={form.deliverables} onChange={e => set('deliverables', e.target.value)} placeholder="2 Reels + 1 Story" /></div>
-            <div><label className="block text-xs font-medium text-brand-text-sec mb-1.5">Rate</label><input className="input" value={form.rate} onChange={e => set('rate', e.target.value)} placeholder="$1,500" /></div>
+            <div>
+              <label className="block text-xs font-medium text-brand-text-sec mb-1.5">Rate (USD)</label>
+              <div className="relative">
+                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-brand-text-muted text-sm select-none">$</span>
+                <input
+                  className="input pl-7"
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={form.rate}
+                  onChange={e => set('rate', e.target.value)}
+                  placeholder="0"
+                />
+              </div>
+            </div>
             <div><label className="block text-xs font-medium text-brand-text-sec mb-1.5">Last Contact</label><input className="input" type="date" value={form.lastContactDate} onChange={e => set('lastContactDate', e.target.value)} /></div>
             <div><label className="block text-xs font-medium text-brand-text-sec mb-1.5">Follow-up Date</label><input className="input" type="date" value={form.followUpDate} onChange={e => set('followUpDate', e.target.value)} /></div>
           </div>

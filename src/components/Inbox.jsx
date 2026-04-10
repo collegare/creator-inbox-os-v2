@@ -55,6 +55,28 @@ function extractEmail(fromStr) {
 }
 
 /* ============================================================
+   Helper: extract brand/company name from sender string
+   Prefers email domain (e.g. sarah@glossier.com → "Glossier")
+   Falls back to display name for personal email providers
+   ============================================================ */
+const PERSONAL_DOMAINS = new Set([
+  'gmail', 'yahoo', 'hotmail', 'outlook', 'icloud', 'aol',
+  'protonmail', 'me', 'live', 'msn', 'ymail',
+]);
+
+function extractCompanyName(fromStr) {
+  const emailAddr = extractEmail(fromStr);
+  const domain = emailAddr.split('@')[1] || '';
+  const domainBase = domain.split('.')[0].toLowerCase();
+  if (domainBase && !PERSONAL_DOMAINS.has(domainBase)) {
+    return domainBase.charAt(0).toUpperCase() + domainBase.slice(1);
+  }
+  // Fall back to display name (first word only as brand name is a guess)
+  const name = extractDisplayName(fromStr);
+  return name !== 'Unknown' ? name : '';
+}
+
+/* ============================================================
    Helper: parse an email body into thread segments
    Detects "On <date> <person> wrote:" patterns and "> " quote markers
    ============================================================ */
@@ -330,7 +352,7 @@ export default function Inbox() {
   const [fullBody, setFullBody] = useState('');
   const [threadMessages, setThreadMessages] = useState([]);
   const [importOpen, setImportOpen] = useState(false);
-  const [importForm, setImportForm] = useState({ brand: '', type: 'unclear' });
+  const [importForm, setImportForm] = useState({ brand: '', contact: '', type: 'unclear' });
   const [searchQuery, setSearchQuery] = useState('');
 
   const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
@@ -448,11 +470,10 @@ export default function Inbox() {
   /* ---------- Import as Opportunity ---------- */
   const handleImport = () => {
     if (!selectedEmail || !importForm.brand) return;
-    const fromMatch = selectedEmail.from?.match(/<(.+?)>/) || [];
     addOpp({
       brand: importForm.brand,
-      contact: selectedEmail.from?.replace(/<.+>/, '').trim() || '',
-      email: fromMatch[1] || '',
+      contact: importForm.contact,
+      email: extractEmail(selectedEmail.from),
       type: importForm.type,
       priority: 'medium',
       status: 'new',
@@ -464,7 +485,7 @@ export default function Inbox() {
     });
     toast?.('Imported as opportunity');
     setImportOpen(false);
-    setImportForm({ brand: '', type: 'unclear' });
+    setImportForm({ brand: '', contact: '', type: 'unclear' });
   };
 
   /* ---------- Not connected state ---------- */
@@ -652,7 +673,7 @@ export default function Inbox() {
                       </div>
                     </div>
                   </div>
-                  <button onClick={() => { setImportForm({ brand: extractDisplayName(selectedEmail.from).split(' ')[0] || '', type: 'unclear' }); setImportOpen(true); }} className="btn btn-primary btn-sm shrink-0">
+                  <button onClick={() => { setImportForm({ brand: extractCompanyName(selectedEmail.from), contact: extractDisplayName(selectedEmail.from), type: 'unclear' }); setImportOpen(true); }} className="btn btn-primary btn-sm shrink-0">
                     <Plus size={14} /> Import as Opp
                   </button>
                 </div>
@@ -686,10 +707,15 @@ export default function Inbox() {
 
       {/* ---- Import Modal ---- */}
       <Modal open={importOpen} onClose={() => setImportOpen(false)} title="Import as Opportunity" size="sm">
+        <p className="text-xs text-brand-text-muted mb-4">Fields are pre-filled from the sender — edit as needed before importing.</p>
         <div className="space-y-4 mb-6">
           <div>
-            <label className="block text-xs font-medium text-brand-text-sec mb-1.5">Brand Name *</label>
+            <label className="block text-xs font-medium text-brand-text-sec mb-1.5">Brand / Company *</label>
             <input className="input" value={importForm.brand} onChange={e => setImportForm(f => ({ ...f, brand: e.target.value }))} placeholder="e.g. Glossier" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-brand-text-sec mb-1.5">Contact Name</label>
+            <input className="input" value={importForm.contact} onChange={e => setImportForm(f => ({ ...f, contact: e.target.value }))} placeholder="e.g. Sarah Kim" />
           </div>
           <div>
             <label className="block text-xs font-medium text-brand-text-sec mb-1.5">Type</label>

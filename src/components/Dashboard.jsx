@@ -3,7 +3,7 @@ import { useData } from '../contexts';
 import { PageHeader } from './Common';
 import { parseRate, fmtCurrency, fmtDateShort, isDue, PIPELINE_STAGES } from '../utils';
 import {
-  Mail, Clock, DollarSign, Gift, Archive, TrendingUp,
+  Mail, Clock, DollarSign, Gift, Archive, TrendingUp, AlertTriangle,
 } from 'lucide-react';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -72,6 +72,23 @@ export default function Dashboard({ onNavigate }) {
   return (
     <div className="animate-fadeIn">
       <PageHeader title="Welcome back" subtitle="Here's what's happening in your creator inbox today." />
+
+      {/* ---- Overdue follow-up alert ---- */}
+      {stats.followUp > 0 && (
+        <div className="mb-6 flex items-center gap-3.5 px-5 py-4 rounded-sm bg-brand-warning-bg border border-brand-warning/25">
+          <AlertTriangle size={18} className="shrink-0 text-brand-warning" />
+          <p className="text-sm font-medium text-brand-warning flex-1">
+            <strong>{stats.followUp}</strong> overdue follow-up{stats.followUp !== 1 ? 's' : ''} — brands waiting on your response.
+          </p>
+          <button
+            onClick={() => onNavigate('opportunities')}
+            className="shrink-0 text-xs font-semibold px-3 py-1.5 rounded-sm transition-colors"
+            style={{ background: 'var(--c-warning)', color: '#fff' }}
+          >
+            View Now
+          </button>
+        </div>
+      )}
 
       {/* ---- Stat Cards ---- */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3.5 mb-9">
